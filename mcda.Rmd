@@ -1,0 +1,724 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    fig_width: 9
+    keep_md: yes
+    number_sections: yes
+    theme: spacelab
+    toc: yes
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+  
+---
+
+
+<!-- # Setup -->
+```{r include=FALSE}
+# knitr::opts_chunk$set(echo = F)
+
+p <- c("tidyverse","MCDA","plotly","DataExplorer", "readxl","BBmisc","data.table")
+# install.packages(p)
+
+# ,"TSdist","DataEsymptomsxplorer","devtools","features""aTSA",
+
+lapply(p, require, character.only = TRUE)
+
+# lapply(p, install.packages, character.only = TRUE)
+
+options(max.print=40, scipen = 999)
+
+```
+
+
+<!-- # Load and manipulate the data: performance table, value functions, weights for each scenario -->
+```{r LOAD DATA, include=FALSE}
+
+# load performance table
+# performance_table <- read_excel("performance_table.xlsx") %>%
+#   mutate(mild_typical=(level.mild.count+level.typical.count)) %>%
+#   select(Scenario,Strategy,mild_typical, severe=level.severe.count, intensiveCare=level.icu.count, mortalities=level.mortalities.count)
+
+library(readr)
+performance_table_update <- read_delim("~/Dropbox/My PhD/MCDA and HTA/SIMULATION RESULTS/prelresults-bpms-20180904 FULL UPDATE.csv", 
+    ";", escape_double = FALSE, col_types = cols(level.icu.count = col_double(), 
+        level.mild.count = col_double(), 
+        level.mortalities.count = col_double(), 
+        level.severe.count = col_double(), 
+        level.typical.count = col_double()),
+    trim_ws = TRUE, n_max=40,
+    skip = 1) %>% 
+    mutate(mild_typical=(level.mild.count+level.typical.count)) %>% 
+    mutate(Strategy=paste("Strategy", Strategy, sep=' ')) %>%  
+  select(Experiment, Scenario,Strategy, mild_typical, severe=level.severe.count, intensiveCare=level.icu.count, mortalities=level.mortalities.count) 
+
+
+# escape_double = FALSE,  
+
+
+  
+# load value functions
+vf_mild_typical <- read_excel("~/Dropbox/My PhD/MCDA and HTA/MCDA COMPONENTS/value functions.xlsx", 
+    sheet = "Lindriga fall") %>% select(x=Attributskala, y=Värdeskala) %>% mutate(y=y/100) %>% t()
+
+vf_severe <- read_excel("~/Dropbox/My PhD/MCDA and HTA/MCDA COMPONENTS/value functions.xlsx", 
+    sheet = "Allvarliga fall")  %>% select(x=Attributskala, y=Värdeskala) %>% mutate(y=y/100) %>% t()
+
+vf_intensiveCare <- read_excel("~/Dropbox/My PhD/MCDA and HTA/MCDA COMPONENTS/value functions.xlsx", 
+    sheet = "Fall i behov av intensivvård") %>% select(x=Attributskala, y=Värdeskala) %>% mutate(y=y/100) %>% t()
+
+vf_mortalities <- read_excel("~/Dropbox/My PhD/MCDA and HTA/MCDA COMPONENTS/value functions.xlsx", 
+    sheet = "Influensarelaterad mortalitet") %>% select(x=Attributskala, y=Värdeskala) %>% mutate(y=y/100) %>% t()
+
+vf_mortalities_MOD <- read_excel("~/Dropbox/My PhD/MCDA and HTA/MCDA COMPONENTS/value functions.xlsx", 
+    sheet = "mortalitet MOD") %>% select(x=Attributskala, y=Värdeskala) %>% mutate(y=y/100) %>% t()
+
+vf_list_ORIG <- list(mild_typical=vf_mild_typical, severe=vf_severe, intensiveCare=vf_intensiveCare, mortalities=vf_mortalities)
+
+vf_list_MOD <- list(mild_typical=vf_mild_typical, severe=vf_severe, intensiveCare=vf_intensiveCare, mortalities=vf_mortalities_MOD)
+
+# load weights
+SWING_weights <- read_excel("~/Dropbox/My PhD/MCDA and HTA/MCDA COMPONENTS/SWING weights influenza.xlsx", 
+  sheet = "compilation", col_types = c("text", "text", "text", "numeric", "numeric", "numeric")) %>% 
+  mutate(criteria=replace(criteria, criteria=="typ+mild", "mild_typical")) %>% 
+  mutate(criteria=replace(criteria, criteria=="icu", "intensiveCare"))
+
+costs <- read_excel("~/Dropbox/My PhD/MCDA and HTA/SIMULATION RESULTS/HEs/Parameterlista.xlsx", 
+    sheet = "data table") %>% select(Experiment, INTERVENTION, 'MEDICAL COSTS (DUE TO ILLNESS)','PRODUCTIVITY LOSS', SUM) %>% 
+left_join(performance_table_update %>% select(Experiment, Scenario, Strategy), by="Experiment")
+
+performance_table <- performance_table_update %>% select(-Experiment)
+
+
+```
+# Simulation data exploration
+## Performance of the Strategy 0 ("do-nothing") on the attributes related to the "Minimise negative health impact" objective, Scenarios 1-5 (excl. 4)
+```{r echo=FALSE}
+sctr0_tmp <- performance_table %>% filter(Strategy=="Strategy 0", 
+                                          Scenario !="Scenario 4") 
+data <- sctr0_tmp
+par(mfrow=c(4,1))
+plot_ly(data, y = ~Scenario, x = ~mild_typical, type = 'bar', 
+        marker = list(color = "darkblue"), 
+        name = 'Minimise number of mild and typical cases', orientation = 'h', text=~paste(format(round(mild_typical/1e6, 1), trim = TRUE), "M"),
+        # text=~formatC(mild_typical, digits = -6L, format = "d", big.mark = " "), textposition = 'outside') %>%
+         textposition = 'outside') %>%
+  
+  # add_trace(y1 = ~severe, name = 'Minimise number of severe cases', text=~round(severe, digits = -2)) %>%
+  # add_trace(x = ~intensiveCare, name = 'Minimise number of people in need of intensive care',text=~formatC(intensiveCare, digits = -1, big.mark = " ")) %>%
+  # add_trace(x = ~mortalities, name = 'Minimise number of inlfuenza related mortalities',text=~round(mortalities, digits = -2)) %>%
+  layout(xaxis = list(title = 'number of cases'), autosize=T,barmode = 'group', legend = list(orientation = 'h'), title='Number of mild and typical cases under Strategy 0')
+
+
+plot_ly(data, y = ~Scenario, x = ~severe, type = 'bar', 
+        marker = list(color = "darkorange"),
+        name = 'Minimise number of severe cases', orientation = 'h', text=~formatC(severe, digits = -2, format = "d", big.mark = " "), textposition = 'outside') %>%
+  layout(xaxis = list(title = 'number of cases'), barmode = 'group', legend = list(orientation = 'h'), title='Number of severe cases under Strategy 0')
+
+
+plot_ly(data, y = ~Scenario, x = ~intensiveCare, type = 'bar', 
+        marker = list(color = "darkgreen"),
+        name = 'Minimise number of people in need of intensive care', orientation = 'h', 
+        text=~paste(format(round(intensiveCare/1e3, 1), trim = TRUE), "K"), textposition = 'outside') %>%
+  layout(xaxis = list(title = 'number of cases'), barmode = 'group', legend = list(orientation = 'h'), title='Number of people in need of intensive care under Strategy 0')
+
+plot_ly(data, y = ~Scenario, x = ~mortalities, type = 'bar', marker = list(color = "darkred"),
+        name = 'Minimise mortalities', orientation = 'h', text=~formatC(mortalities, digits = -2, format = "d", big.mark = " "), textposition = 'outside') %>%
+  layout(xaxis = list(title = 'number of cases'), barmode = 'group', legend = list(orientation = 'h'), title='Mortalities under Strategy 0')
+
+```
+Scenario 4 is way off. Turned out it was incorrectly configured. It's temporarily excluded from further analysis.
+
+
+
+```{r eval=FALSE, include=FALSE}
+# Transform performance values into utilities by applying the value functions,  Scenario 1 only
+library(MCDA)
+performance_typical_scen1 <- performance_table %>% filter(Scenario=="Scenario 4") %>%  select(-Scenario)
+performance_matrix<- performance_typical_scen1 %>% 
+    select(-Strategy) %>% 
+    as.data.frame()
+
+# plotPiecewiseLinearValueFunctions(vf_list)
+
+strategy_utilities <- applyPiecewiseLinearValueFunctionsOnPerformanceTable(vf_list,performance_matrix,
+                                                     alternativesIDs = performance_matrix$Strategy)
+
+ # rownames(strategy_utilities) <- performance_typical_scen1$Strategy
+ 
+strategies_scen1_utilities <- as.tibble(strategy_utilities) %>% mutate(Strategies=performance_typical_scen1$Strategy) %>% select(Strategies, everything())
+ 
+
+{data <- strategies_scen1_utilities
+plot_ly(data, y = ~Strategies, x = ~mild_typical, type = 'bar', name = 'Minimise number of mild and typical cases', orientation = 'h') %>%
+  add_trace(x = ~severe, name = 'Minimise number of severe cases') %>%
+  add_trace(x = ~intensiveCare, name = 'Minimise number of people in need of intensive care') %>%
+  add_trace(x = ~mortalities, name = 'Minimise number of inlfuenza related mortalities') %>%
+  layout(xaxis = list(title = 'Utility'), barmode = 'group', legend = list(orientation = 'h'))
+}
+
+```
+<!-- Notably, the strategy 6 under scenario 1 has higher utility than Strategy 7 (mild_typical and severe), strategy 3 is higher than stratgy 4 (mild_typical) -->
+
+
+```{r eval=FALSE, include=FALSE}
+# 2. Aggregating results using simple weighted sum (scenario 1 only)
+weights_scen1 <- SWING_weights %>% filter(Scenario=="Scenario 1") %>% select(criteria, weight)
+
+
+performanceTable <- matrix(runif(3*4), ncol=3)
+    row.names(performanceTable) <- c("x1","x2","x3","x4")
+    colnames(performanceTable) <- c("g1","g2","g3")
+    weights <- c(1,2,3)
+    names(weights) <- c("g1","g2","g3")
+    overall1 <- weightedSum(performanceTable, weights)
+    overall2 <- weightedSum(performanceTable, weights,
+          alternativesIDs <- c("x2","x3"), criteriaIDs <- c("g2","g3"))
+    
+aggregated_score_scen1 <- weightedSum(strategy_utilities, weights_scen1$weight) %>% as.tibble() %>% mutate(Strategies=performance_typical_scen1$Strategy) %>% select(Strategies, aggregated_value=value)
+
+    
+{data <- aggregated_score_scen1
+plot_ly(data, y = ~Strategies, x = ~aggregated_value, type = 'bar', name = 'Aggregated values of Strategies under Scenario 1', orientation = 'h', text=~round(aggregated_value, digits = 3), textposition = 'outside') %>%
+  layout(xaxis = list(title = 'Aggregated Value',range = c(0.8,1)), legend = list(orientation = 'h'))
+}
+
+```
+
+
+## Transform performance of alternatives into utilities using value functions
+```{r echo=FALSE}
+plotPiecewiseLinearValueFunctions(vf_list_ORIG)
+
+```
+
+<!-- ## Defining FUNCTIONS -->
+```{r Definitions of functions, include=FALSE}
+
+# apply value functions on performance table:
+get_utilities_for_select_scenario = function(performance_table, select_scenario, vf_list) {
+  performance_matrix_scenX <- performance_table %>% filter(Scenario==select_scenario) 
+  performance_matrix_to_process <- performance_matrix_scenX %>% select(-Scenario,-Strategy) %>% as.data.frame()
+
+  library(MCDA)
+  strategy_utilities_select_scenario <- applyPiecewiseLinearValueFunctionsOnPerformanceTable(vf_list,performance_matrix_to_process,
+                                                     alternativesIDs = performance_matrix_to_process$Strategy)
+  strategies_scenX_utilities <- as.tibble(strategy_utilities_select_scenario) %>%
+    mutate(Strategy=performance_matrix_scenX$Strategy, Scenario=performance_matrix_scenX$Scenario) %>%
+    select(Strategy,Scenario,everything())
+
+  strategies_scenX_utilities %>% return()
+}
+
+#todo fix the utilities
+
+# plot utilities:
+plot_utilities=function(data, cut_range=0){
+  # data <- scen1_strategies_utilities
+  plot_ly(data, y = ~Strategy, x = ~mild_typical, type = 'bar', name = 'Minimise number of mild and typical cases', orientation = 'h', text=~round(mild_typical, digits = 3), textposition = 'outside') %>%
+    add_trace(x = ~severe, name = 'Minimise number of severe cases', text=~round(severe, digits = 3)) %>%
+    add_trace(x = ~intensiveCare, name = 'Minimise number of people in need of intensive care',text=~round(intensiveCare, digits = 3)) %>%
+    add_trace(x = ~mortalities, name = 'Minimise number of inlfuenza related mortalities',text=~round(mortalities, digits = 3)) %>%
+    layout(xaxis = list(title = 'Utility', range = c(cut_range,1)), barmode = 'group', legend = list(orientation = 'h'), title=data$Scenario)
+}
+
+# calculate_weighted_sum for a scenario presented in the utilities data
+
+calculate_weighted_sum_select_scenario = function(scenX_strategy_utilities, weights){
+  scenX_weights <- SWING_weights %>% filter(Scenario==as.character(unique(scenX_strategy_utilities$Scenario))) %>%   select(criteria, weight)
+  
+  performance_matrix_to_process <- scenX_strategy_utilities %>% select(-Scenario,-Strategy) %>% as.data.frame()
+  
+  library('MCDA')
+  scenX_weighted_sum <- weightedSum(performance_matrix_to_process, scenX_weights$weight) %>% as.tibble() %>%     mutate(Scenario=scenX_strategy_utilities$Scenario, Strategy=scenX_strategy_utilities$Strategy, weighted_sum_value=value) %>% select(-value)
+  return(scenX_weighted_sum)
+}
+
+plot_weighted_sum=function(data, cut_range=0.8){
+plot_ly(data, y = ~Strategy, x = ~weighted_sum_value, type = 'bar', name = 'Aggregated values of Strategies', orientation = 'h', text=~round(weighted_sum_value, digits = 3), textposition = 'outside') %>%
+  layout(xaxis = list(title = 'Aggregated Utility',range = c(cut_range,1)), legend = list(orientation = 'h'), title=unique(data$Scenario))
+}
+
+
+```
+
+
+
+<!-- ## Strategies' Radar Performance values for 5 scenarios (excl. scenario 4) -->
+```{r plot radar performance, eval=FALSE, include=FALSE}
+get_utilities_for_select_scenario(performance_table,"Scenario 5",vf_list_ORIG) %>% select(-Scenario,-Strategy) %>% as.data.frame() %>% plotRadarPerformanceTable()
+
+```
+
+```{r aggregated score for scneario 1, eval=FALSE, include=FALSE}
+scen1_strategies_utilities %>% calculate_weighted_sum_select_scenario(SWING_weights) %>% plot_weighted_sum()
+```
+
+```{r investigating scenario 4 as the values are outside value functions, eval=FALSE, include=FALSE}
+get_utilities_for_select_scenario(performance_table,"Scenario 4",vf_list_ORIG)
+scen4_tmp <- performance_table %>% filter(Scenario=="Scenario 4")
+
+scen4 <- scen4_tmp  %>%  summarise_all(max)
+vf <- lapply(vf_list_ORIG, max) %>% as.tibble()
+
+full_join(scen4,vf)
+# number of severely sick is beyond the value function
+scen4_tmp %>% select(-Scenario) %>% barplot()
+
+```
+## Health utilities for Scenarios 1-5 (excl. 4) (original value functions)
+```{r plot utilities for Scenarios 1, echo=FALSE}
+# todo ADD raw values for the hover over text, so it's possible to see the number of respective cases mapped to the utilitity value
+par(mfrow=c(4,1))
+get_utilities_for_select_scenario(performance_table,"Scenario 1",vf_list_ORIG) %>% plot_utilities()
+get_utilities_for_select_scenario(performance_table,"Scenario 2",vf_list_ORIG) %>% plot_utilities()
+get_utilities_for_select_scenario(performance_table,"Scenario 3",vf_list_ORIG) %>% plot_utilities()
+
+# get_utilities_for_select_scenario(performance_table,"Scenario 4",vf_list_ORIG) # number of severely sick is beyond the value function 455571.4 VS 250000.0
+# 
+# %>% plot_utilities()
+
+get_utilities_for_select_scenario(performance_table,"Scenario 5",vf_list_ORIG) %>% plot_utilities()
+
+```
+Performance of the 7 alternative strategies with respect to the "Minimise number of severe cases" and "Minimise number of people in need of intensive care"  attributes are very close, specifically under Scenario 2,3, 5. Notably, utilities of the Strategies 0-5 for "# of severe cases"" and "# ICU" are about the same under Scenario 3 -- due to similar shapes and disticnt points of the respective value functions (mind the bisection method).
+
+
+```{r plotting hover over show  raw data, eval=FALSE, include=FALSE}
+
+tmp1 <- get_utilities_for_select_scenario(performance_table,"Scenario 3",vf_list_ORIG) 
+tmp1
+
+
+
+cut_range=0.5
+
+
+
+plot_ly(tmp1, y = ~Strategy, x = ~mild_typical, type = 'bar', name = 'Minimise number of mild and typical cases', orientation = 'h', text=~round(mild_typical, digits = 3), textposition = 'outside', hovertext=performance_table$mild_typical) %>%
+    add_trace(x = ~severe, name = 'Minimise number of severe cases', text=~round(severe, digits = 3)) %>%
+    add_trace(x = ~intensiveCare, name = 'Minimise number of people in need of intensive care',text=~round(intensiveCare, digits = 3)) %>%
+    add_trace(x = ~mortalities, name = 'Minimise number of inlfuenza related mortalities',text=~round(mortalities, digits = 3)) %>%
+    layout(xaxis = list(title = 'Utility', range = c(cut_range,1)), barmode = 'group', legend = list(orientation = 'h'), title=data$Scenario)
+
+```
+
+
+
+## Modified value function for mortalities
+Value function of mortality seems to be impractical as its zero value corresponds to 50 000 cases. "50 000 mortalities" assumes Scenario 5 (the most lethal) and Strategy 0 (do nothing), which sets the lowest possible "bar" for performance. Another connected issue is that the value function is linear, meaning that low number of deaths relative to 50 000 (e.g. 16 under scenario 2) gives a minuscule penalty to the utility as it evaluate performance proportionally (1- 16/50 000).
+
+The shape of a value function could be dependant on a scenario. Indeed, with a mild scenario we should not expect more than 100 mortalities whereas with a catastrophic scenario 5 more than 10 000 is a real possibility. However, at the time of decision regariding the intervention strategy it is uknown which scenario is to unfold. Therefore, the shape of the "Mortalities value function"" could be modified to reflect "worst-cases" for each scenario (as estimated by the simulation model).
+```{r echo=FALSE}
+vf_list_MOD %>%  plotPiecewiseLinearValueFunctions()
+```
+
+## Health-related utilities with modified value function for # of mortalities, for Scenarios 1-5 (excl. 4)
+
+
+
+
+
+```{r plot utilities for Scenarios 1 MODIFIED, echo=FALSE}
+# par(mfrow=c(4,1))
+get_utilities_for_select_scenario(performance_table,"Scenario 1",vf_list_MOD) %>% plot_utilities()
+get_utilities_for_select_scenario(performance_table,"Scenario 2",vf_list_MOD) %>% plot_utilities()
+get_utilities_for_select_scenario(performance_table,"Scenario 3",vf_list_MOD) %>% plot_utilities()
+
+# applyPiecewiseLinearValueFunctionsOnPerformanceTable(vf_list_ORIG,performance_table %>% select(-Experiment,-Scenario,-Strategy))
+
+vf_list_ORIG %>% plotPiecewiseLinearValueFunctions()
+vf_list_MOD %>% plotPiecewiseLinearValueFunctions()
+
+# get_utilities_for_select_scenario(performance_table,"Scenario 4",vf_list_MOD) # number of severely sick is beyond the value function 455571.4 VS 250000.0
+# 
+# %>% plot_utilities()
+# tmp1 <- performance_table %>% filter(Scenario!="Scenario 4") %>% select(-Experiment, -Scenario, - Strategy) %>% summarise_all(min)
+# tmp2 <- lapply(vf_list_MOD, min) %>% as.tibble()
+# 
+# tmp1$mortalities<tmp2$mortalities
+
+
+get_utilities_for_select_scenario(performance_table,"Scenario 5",vf_list_MOD) %>% plot_utilities()
+
+```
+
+
+
+## Aggregated utilties (weighted sum) for scenario 1-5 (excl. 4) with modified value function for mortality
+```{r echo=FALSE}
+par(mfrow=c(4,1))
+get_utilities_for_select_scenario(performance_table,"Scenario 1",vf_list_MOD) %>% calculate_weighted_sum_select_scenario(SWING_weights) %>% plot_weighted_sum()
+
+get_utilities_for_select_scenario(performance_table,"Scenario 2",vf_list_MOD) %>% calculate_weighted_sum_select_scenario(SWING_weights) %>% plot_weighted_sum()
+get_utilities_for_select_scenario(performance_table,"Scenario 3",vf_list_MOD) %>% calculate_weighted_sum_select_scenario(SWING_weights) %>% plot_weighted_sum(cut_range = 0)
+
+# get_utilities_for_select_scenario(performance_table,"Scenario 4",vf_list_MOD) # number of severely sick is beyond the value function 455571.4 VS 250000.0
+# 
+# %>% plot_utilities()
+
+
+get_utilities_for_select_scenario(performance_table,"Scenario 5",vf_list_MOD) %>% calculate_weighted_sum_select_scenario(SWING_weights) %>% plot_weighted_sum(cut_range = 0)
+
+
+```
+
+<!-- ## Aggregatd Utility per Strategy per Scenario: HEALTH related attributes ONLY -->
+```{r aggregate health criteria as weighted sum for modified and original mortaltiies vf, include=FALSE}
+pivot_df_health_MOD <- rbind(get_utilities_for_select_scenario(performance_table,"Scenario 1",vf_list_MOD) %>% calculate_weighted_sum_select_scenario(SWING_weights),
+get_utilities_for_select_scenario(performance_table,"Scenario 2",vf_list_MOD) %>% calculate_weighted_sum_select_scenario(SWING_weights),
+get_utilities_for_select_scenario(performance_table,"Scenario 3",vf_list_MOD) %>% calculate_weighted_sum_select_scenario(SWING_weights),
+# get_utilities_for_select_scenario(performance_table,"Scenario 4",vf_list_MOD) %>% calculate_weighted_sum_select_scenario(SWING_weights),
+get_utilities_for_select_scenario(performance_table,"Scenario 5",vf_list_MOD) %>% calculate_weighted_sum_select_scenario(SWING_weights))
+
+
+pivot_df_health_ORIG <- rbind(get_utilities_for_select_scenario(performance_table,"Scenario 1",vf_list_ORIG) %>% calculate_weighted_sum_select_scenario(SWING_weights),
+get_utilities_for_select_scenario(performance_table,"Scenario 2",vf_list_ORIG) %>% calculate_weighted_sum_select_scenario(SWING_weights),
+get_utilities_for_select_scenario(performance_table,"Scenario 3",vf_list_ORIG) %>% calculate_weighted_sum_select_scenario(SWING_weights),
+# get_utilities_for_select_scenario(performance_table,"Scenario 4",vf_list_ORIG) %>% calculate_weighted_sum_select_scenario(SWING_weights),
+get_utilities_for_select_scenario(performance_table,"Scenario 5",vf_list_ORIG) %>% calculate_weighted_sum_select_scenario(SWING_weights))
+
+
+```
+
+
+```{r Aggregated Utility per Strategy per Scenario (MODIFIED vf for mortalities), echo=FALSE}
+# tmp_data <- pivot_df_health_MOD %>% spread(Scenario, weighted_sum_value)
+
+plot_ly(pivot_df_health_MOD %>% spread(Scenario, weighted_sum_value), y = ~Strategy, x = ~`Scenario 1`, type = 'bar', 
+        name = 'Scenario 1', orientation = 'h', 
+        text=~round(`Scenario 1`, digits = 3), textposition = 'outside') %>%
+    add_trace(x = ~`Scenario 2`, name = "Scenario 2", text=~round(`Scenario 2`, digits = 3)) %>%
+    add_trace(x = ~`Scenario 3`, name = "Scenario 3", text=~round(`Scenario 3`, digits = 3)) %>%
+    # add_trace(x = ~`Scenario 4`, name = 'Scenario 4',text=~round(`Scenario 4`, digits = 3)) %>%
+    add_trace(x = ~`Scenario 5`, name = 'Scenario 5',text=~round(`Scenario 5`, digits = 3)) %>%
+    layout(xaxis = list(title = 'Aggregated Utility (modified value function for mortalities)'), barmode = 'group', legend = list(orientation = 'h'), title='Aggregated utility per Strategy through scenarios')
+
+
+# plot_aggregated_values_scenarios=function(data){
+#   # data <- scen1_strategies_utilities
+#   plot_ly(data, y = ~Strategy, x = ~'Scenario 1', type = 'bar', name = 'Minimise number of mild and typical cases', orientation = 'h', text=~round('Scenario 1', digits = 3), textposition = 'outside') %>%
+#     # add_trace(x = ~'Scenario 2`, name = 'Minimise number of severe cases', text=~round(`Scenario 2`, digits = 3)) %>%
+#     # add_trace(x = ~'Scenario 3', name = 'Minimise number of people in need of intensive care',text=~round('Scenario 3', digits = 3)) %>%
+#     # add_trace(x = ~'Scenario 5', name = 'Minimise number of inlfuenza related mortalities',text=~round('Scenario 5', digits = 3)) %>%
+#     layout(xaxis = list(title = 'Utility'), barmode = 'group', legend = list(orientation = 'h'), title=data$Scenario)
+# }
+# 
+# pivot_df_health_MOD %>% plot_aggregated_values_scenarios()
+```
+
+
+
+
+## Ranking alternatives by the HEALTH related attributes
+```{r RANKS per Strategy per Scenario: HEALTH related attributes ONLY (mod vf for mortalities), echo=FALSE}
+
+aggregate_health_tmp <- pivot_df_health_MOD %>%
+  group_by(Scenario) %>% 
+  mutate(health_rank=data.table::frankv(weighted_sum_value, order = -1))
+
+
+p_rank_MOD <- plot_ly(aggregate_health_tmp %>% select (Scenario, Strategy, health_rank) %>% spread(Scenario, health_rank), y = ~Strategy, x = ~`Scenario 1`, type = 'bar', 
+        name = 'Scenario 1', orientation = 'h', 
+        text=~round(`Scenario 1`, digits = 3), textposition = 'outside') %>%
+    add_trace(x = ~`Scenario 2`, name = "Scenario 2", text=~round(`Scenario 2`, digits = 3)) %>%
+    add_trace(x = ~`Scenario 3`, name = "Scenario 3", text=~round(`Scenario 3`, digits = 3)) %>%
+    # add_trace(x = ~`Scenario 4`, name = 'Scenario 4',text=~round(`Scenario 4`, digits = 3)) %>%
+    add_trace(x = ~`Scenario 5`, name = 'Scenario 5',text=~round(`Scenario 5`, digits = 3)) %>%
+    layout(xaxis = list(title = 'Aggregated Utility (MODIFIED value function for mortalities)'), barmode = 'group', legend = list(orientation = 'h'), title='Aggregated Utility per Strategy per Scenario')
+
+p_rank_MOD
+```
+
+
+## Comparing aggregated utilities and ranks for MOD and ORIG vf for mortalities
+
+```{r COMPARING aggregated utilities for MOD and ORIG vf for mortalities: HEALTH related attributes ONLY, echo=FALSE}
+
+
+{aggregate_health_tmp <- pivot_df_health_ORIG
+p_aggregated_utilities_ORIG <- plot_ly(aggregate_health_tmp %>% spread(Scenario, weighted_sum_value), y = ~Strategy, x = ~`Scenario 1`, type = 'bar', 
+        name = 'Scenario 1', orientation = 'h', 
+        text=~round(`Scenario 1`, digits = 3), textposition = 'outside') %>%
+    add_trace(x = ~`Scenario 2`, name = "Scenario 2", text=~round(`Scenario 2`, digits = 3)) %>%
+    add_trace(x = ~`Scenario 3`, name = "Scenario 3", text=~round(`Scenario 3`, digits = 3)) %>%
+    # add_trace(x = ~`Scenario 4`, name = 'Scenario 4',text=~round(`Scenario 4`, digits = 3)) %>%
+    add_trace(x = ~`Scenario 5`, name = 'Scenario 5',text=~round(`Scenario 5`, digits = 3)) %>%
+    layout(xaxis = list(title = 'Aggregated Utility (ORIGINAL value function for mortalities)'), barmode = 'group', legend = list(orientation = 'h'), title='Aggregated utility per Strategy through scenarios')}
+
+
+{aggregate_health_tmp <- pivot_df_health_MOD
+p_aggregated_utilities_MOD <- plot_ly(aggregate_health_tmp %>% spread(Scenario, weighted_sum_value), y = ~Strategy, x = ~`Scenario 1`, type = 'bar', 
+        name = 'Scenario 1', orientation = 'h', 
+        text=~round(`Scenario 1`, digits = 3), textposition = 'outside') %>%
+    add_trace(x = ~`Scenario 2`, name = "Scenario 2", text=~round(`Scenario 2`, digits = 3)) %>%
+    add_trace(x = ~`Scenario 3`, name = "Scenario 3", text=~round(`Scenario 3`, digits = 3)) %>%
+    # add_trace(x = ~`Scenario 4`, name = 'Scenario 4',text=~round(`Scenario 4`, digits = 3)) %>%
+    add_trace(x = ~`Scenario 5`, name = 'Scenario 5',text=~round(`Scenario 5`, digits = 3)) %>%
+    layout(xaxis = list(title = 'Aggregated Utility (MODIFIED value function for mortalities)'), barmode = 'group', legend = list(orientation = 'h'), title='Aggregated utility per Strategy through scenarios')
+}
+
+subplot(p_aggregated_utilities_MOD,p_aggregated_utilities_ORIG, shareX = T, shareY = T, titleX=T, titleY = T)
+```
+
+
+```{r COMPARING RANKS for MOD and ORIG vf for mortalities: HEALTH related attributes ONLY, echo=FALSE}
+
+aggregate_health_tmp <- pivot_df_health_ORIG %>%
+  group_by(Scenario) %>% 
+  mutate(health_rank=data.table::frankv(weighted_sum_value, order = -1))
+
+
+p_rank_ORIG <- plot_ly(aggregate_health_tmp %>% select (Scenario, Strategy, health_rank) %>% spread(Scenario, health_rank), y = ~Strategy, x = ~`Scenario 1`, type = 'bar', 
+        name = 'Scenario 1', orientation = 'h', 
+        text=~round(`Scenario 1`, digits = 3), 
+        textposition = 'outside') %>%
+    add_trace(x = ~`Scenario 2`, name = "Scenario 2", text=~round(`Scenario 2`, digits = 3)) %>%
+    add_trace(x = ~`Scenario 3`, name = "Scenario 3", text=~round(`Scenario 3`, digits = 3)) %>%
+    # add_trace(x = ~`Scenario 4`, name = 'Scenario 4',text=~round(`Scenario 4`, digits = 3)) %>%
+    add_trace(x = ~`Scenario 5`, name = 'Scenario 5',text=~round(`Scenario 5`, digits = 3)) %>%
+    layout(xaxis = list(title = 'Aggregated Utility (ORIGINAL value function for mortalities)'), barmode = 'group', legend = list(orientation = 'h'), title='Aggregated Utility per Strategy per Scenario')
+
+#todo hoverover shows aggregated utility
+
+subplot(p_rank_MOD, p_rank_ORIG, shareX = T, shareY = T, titleX=T, titleY = T)
+```
+
+
+
+
+
+```{r hover over shows aggregated utilities, echo=FALSE}
+
+
+
+p_rank_ORIG <- plot_ly(aggregate_health_tmp %>% select (Scenario, Strategy, health_rank) %>% spread(Scenario, health_rank), y = ~Strategy, x = ~`Scenario 1`, type = 'bar', 
+        name = 'Scenario 1', orientation = 'h', 
+        text=~round(`Scenario 1`, digits = 3), 
+        textposition = 'outside') %>%
+    add_trace(x = ~`Scenario 2`,
+              name = "Scenario 2",
+              text=~round(`Scenario 2`, digits = 3)
+              # hovertext=c("hekki1",2,3,4,5,6,7,8),
+              # hoverinfo="text"
+              ) %>%
+    add_trace(x = ~`Scenario 3`, name = "Scenario 3", text=~round(`Scenario 3`, digits = 3)) %>%
+    # add_trace(x = ~`Scenario 4`, name = 'Scenario 4',text=~round(`Scenario 4`, digits = 3)) %>%
+    add_trace(x = ~`Scenario 5`, name = 'Scenario 5',text=~round(`Scenario 5`, digits = 3)) %>%
+    # add_trace(x = aggregate_health_tmp$weighted_sum_value, name = 'weighted_sum_value') %>%
+    layout(xaxis = list(title = 'Aggregated Utility (ORIGINAL value function for mortalities)'), barmode = 'group', legend = list(orientation = 'h'), title='Aggregated Utility per Strategy per Scenario')
+
+p_rank_ORIG
+
+```
+
+
+
+# Costs
+## Exploring the costs
+```{r echo=FALSE}
+
+plot_stacked_costs =function(data){
+plot_ly(data, y = ~Strategy, x = ~INTERVENTION, type = 'bar', 
+        name = 'Intervention costs', orientation = 'h') %>%
+    add_trace(x = ~`MEDICAL COSTS (DUE TO ILLNESS)`, name = "Medical costs (due to illness)") %>%
+    add_trace(x = ~`PRODUCTIVITY LOSS`, name = "Productivity loss", 
+              text=~paste(format(round(SUM/1e9, 1), trim = TRUE), "BnSEK"), textposition = 'outside') %>%
+    # add_trace(x = ~`Scenario 4`, name = 'Scenario 4',text=~round(`Scenario 4`, digits = 3)) %>%
+    # add_trace(x = ~`Scenario 5`, name = 'Scenario 5',text=~round(`Scenario 5`, digits = 3)) %>%
+    layout(xaxis = list(title = as.character(data$Scenario)),yaxis = list(title = ''), barmode = 'stack', legend = list(orientation = 'h'), title='Aggregated Costs')
+}
+
+p1 <- costs %>% filter(Scenario=="Scenario 1") %>% plot_stacked_costs()
+p2 <- costs %>% filter(Scenario=="Scenario 2") %>% plot_stacked_costs()
+p3 <- costs %>% filter(Scenario=="Scenario 3") %>% plot_stacked_costs()
+p5 <- costs %>% filter(Scenario=="Scenario 5") %>% plot_stacked_costs()
+
+
+p1
+p2
+p3
+
+p5
+# 
+# subplot(p1,p2,p3,p5, shareX = T, shareY = T, titleX = T, titleY = F)%>%
+#   layout(title = "Walmart Store Openings by Year",
+#          xaxis = list(domain=list(x=c(0,0.5),y=c(0,0.5))),
+#          scene = list(domain=list(x=c(0,0.5),y=c(0,1))),
+#          xaxis2 = list(domain=list(x=c(0,0.5),y=c(1,1.5))),
+#          showlegend=FALSE,showlegend2=FALSE)
+
+
+
+```
+
+<!-- ## Normalising costs -->
+```{r include=FALSE}
+
+costs_normalised <- costs %>% mutate_at(c('INTERVENTION', 'MEDICAL COSTS (DUE TO ILLNESS)', 'PRODUCTIVITY LOSS','SUM'), BBmisc::normalize, method='range',range=c(1,0))
+
+# normalizationTypes <- c("rescaling","rescaling","rescaling","rescaling")
+# normalizedPerformanceTable <-costs %>% select(c('INTERVENTION', 'MEDICAL COSTS (DUE TO ILLNESS)', 'PRODUCTIVITY LOSS','SUM')) %>%  as.data.frame() %>%  normalizePerformanceTable(normalizationTypes)
+# # this method only assumes ascending value function (the higher the better) - could be solved if swap a sign (to -).
+
+
+```
+
+
+```{r weighted sum of health+costs, include=FALSE}
+healthWS_costsWS <- costs_normalised %>% filter(Scenario != "Scenario 4") %>%  left_join(pivot_df_health_MOD, by = c("Scenario", "Strategy")) %>% select(Experiment, Scenario, Strategy, health_WS=weighted_sum_value, costs_WS=SUM)
+
+aggregate_WS_8020 <- healthWS_costsWS %>%
+  mutate(aggregate_WS_8020=health_WS*0.8+costs_WS*0.2) %>% 
+  group_by(Scenario) %>% 
+  mutate(rank_WS_8020=data.table::frankv(aggregate_WS_8020, order = -1))
+
+aggregate_WS_5050 <- healthWS_costsWS %>%
+  mutate(aggregate_WS_5050=health_WS*0.5+costs_WS*0.5) %>%
+  group_by(Scenario) %>% 
+  mutate(rank_WS_5050=data.table::frankv(aggregate_WS_5050, order = -1))
+
+aggregate_WS_2080 <- healthWS_costsWS %>%
+  mutate(aggregate_WS_2080=health_WS*0.2+costs_WS*0.8) %>% 
+  group_by(Scenario) %>% 
+  mutate(rank_WS_2080=data.table::frankv(aggregate_WS_2080, order = -1))
+
+
+costs_health_weighted_aggregate <- aggregate_WS_8020 %>% left_join(aggregate_WS_5050) %>% left_join(aggregate_WS_2080)
+
+
+# plot_pivot=function(data, value=select(data,- c("Scenario","Strategy")), cut_range=0.8){
+# plot_ly(data, y = ~Strategy, x = ~value, type = 'bar', name = 'Aggregated values of Strategies under Scenario 1', orientation = 'h', text=~value, textposition = 'outside') %>%
+#   layout(xaxis = list(title = 'Aggregated Value',range = c(cut_range,1)), legend = list(orientation = 'h'), title=unique(data$Scenario))
+# }
+
+
+
+  
+```
+# exploring costs_health_weighted_aggregate
+## costs VS health weights sensitivity analysis
+```{r exploring costs_health_weighted_aggregate, echo=FALSE}
+
+plot_aggregates=function(data){
+  # data <- scen1_strategies_utilities
+  plot_ly(data, y = ~Strategy, x = ~aggregate_WS_8020, type = 'bar', name = '80% Health - 20% Costs', orientation = 'h', text=~round(aggregate_WS_8020, digits = 3), textposition = 'outside') %>%
+    # add_text(textfont = t, textposition = "top right") %>% 
+    add_trace(x = ~aggregate_WS_5050, name = '50% Health - 50% Costs', text=~round(aggregate_WS_5050, digits = 3)) %>%
+    add_trace(x = ~aggregate_WS_2080, name = '20% Health - 80% Costs',text=~round(aggregate_WS_2080, digits = 3)) %>%
+    layout(xaxis = list(title = 'Utility'), barmode = 'group', legend = list(orientation = 'h'), title=data$Scenario)
+}
+
+{par(mfrow=c(4,1))
+costs_health_weighted_aggregate %>% filter(Scenario=="Scenario 1") %>% plot_aggregates()
+costs_health_weighted_aggregate %>% filter(Scenario=="Scenario 2") %>% plot_aggregates()
+costs_health_weighted_aggregate %>% filter(Scenario=="Scenario 3") %>% plot_aggregates()
+costs_health_weighted_aggregate %>% filter(Scenario=="Scenario 5") %>% plot_aggregates()}
+```
+The simple approach is to investigate at what weights the rank for each alternative changes.
+<!-- At the current decision goals is it  more meanignful to conduct a cost-benefit analysis? -->
+```{r echo=FALSE}
+
+plot_ranks=function(data){
+  # data <- scen1_strategies_utilities
+  plot_ly(data, y = ~Strategy, x = ~rank_WS_8020, 
+          type = 'bar', 
+          name = '80% Health - 20% Costs', 
+          orientation = 'h', 
+          text=~rank_WS_8020, textposition = 'outside' 
+          # mode = 'marker'
+          ) %>%
+    # add_text(textfont = t, textposition = "top right") %>% 
+    add_trace(x = ~rank_WS_5050, name = '50% Health - 50% Costs', text=~round(rank_WS_5050, digits = 3)) %>%
+    add_trace(x = ~rank_WS_2080, name = '20% Health - 80% Costs',text=~round(rank_WS_2080, digits = 3)) %>%
+    layout(xaxis = list(title = 'Utility'), barmode = 'group', legend = list(orientation = 'h'), title=data$Scenario)
+}
+
+costs_health_weighted_aggregate %>% filter(Scenario=="Scenario 1") %>% plot_ranks
+costs_health_weighted_aggregate %>% filter(Scenario=="Scenario 2") %>% plot_ranks
+costs_health_weighted_aggregate %>% filter(Scenario=="Scenario 3") %>% plot_ranks
+costs_health_weighted_aggregate %>% filter(Scenario=="Scenario 5") %>% plot_ranks
+
+```
+
+# Exploring robustness of strategies at different scenarios
+```{r include=FALSE}
+# take average utility among scenarios - this assumes equal probabilties of scenarios - and get the ranks
+
+costs_health_weighted_aggregate %>% filter(Strategy=="Strategy 0") %>% select(-Experiment, -Scenario) %>% summarise()
+
+robust_aggregated_score <- costs_health_weighted_aggregate %>%
+  group_by(Strategy) %>%
+  mutate(robust_WS_8020=mean(aggregate_WS_8020), robust_WS_5050=mean(aggregate_WS_5050), robust_WS_2080=mean(aggregate_WS_2080)) %>%  group_by (Scenario) %>%
+  mutate(robust_rank_WS_8020=data.table::frankv(robust_WS_8020, order = -1),robust_rank_WS_5050=data.table::frankv(robust_WS_5050, order = -1),robust_rank_WS_2080=data.table::frankv(robust_WS_2080, order = -1))
+
+
+```
+
+```{r PLOTTING robustness, echo=FALSE}
+# plot_pivot(data=robustness, y='Scenario', x='robust_WS_8020')
+
+plot_ly(robust_aggregated_score, y = ~Strategy, x = ~robust_WS_8020, 
+        type = 'bar',
+        name = '80% Health - 20% Costs',
+        orientation = 'h',
+        text=~round(robust_WS_8020, digits = 3),
+        textposition = 'outside') %>%
+    # add_text(textfont = t, textposition = "top right") %>% 
+    add_trace(x = ~robust_WS_5050, 
+              name = '50% Health - 50% Costs',
+              text=~round(robust_WS_5050, digits = 3)) %>%
+    add_trace(x = ~robust_WS_2080,
+              name = '20% Health - 80% Costs',
+              text=~round(robust_WS_2080, digits = 3)) %>%
+    layout(xaxis = list(title = 'robust_aggregated_score'), 
+           barmode = 'group', 
+           legend = list(orientation = 'h'), 
+           title='robust_aggregated_score')
+
+# plotting ranks
+plot_ly(robust_aggregated_score, y = ~Strategy, x = ~robust_rank_WS_8020, type = 'bar', name = '80% Health - 20% Costs', orientation = 'h', text=~round(robust_rank_WS_8020, digits = 3), textposition = 'outside') %>%
+    # add_text(textfont = t, textposition = "top right") %>% 
+    add_trace(x = ~robust_rank_WS_5050, name = '50% Health - 50% Costs', text=~round(robust_rank_WS_5050, digits = 3)) %>%
+    add_trace(x = ~robust_rank_WS_2080, name = '20% Health - 80% Costs',text=~round(robust_rank_WS_2080, digits = 3)) %>%
+    layout(xaxis = list(title = 'Utility'), barmode = 'group', legend = list(orientation = 'h'), title=data$Scenario)
+
+
+
+# robust_aggregated_score %>% select(Strategy, robust_rank_WS_2080, robust_rank_WS_5050, robust_rank_WS_2080)
+
+```
+
+
+```{r, UNIVERSAL PLOTTING FUNCTION, eval=FALSE, include=FALSE}
+plot_pivot=function(data, x, y){
+plot_ly(data, y = ~y, x = ~x, type = 'bar', name = '80% Health - 20% Costs', orientation = 'h', text=~x, textposition = 'outside') %>% 
+  layout(xaxis = list(title = as.character(x)), barmode = 'group', legend = list(orientation = 'h'), title=data$y)
+}
+
+plot_ranks=function(data, ranked_variable1,ranked_variable2=NULL,ranked_variable3=NULL,ranked_variable4=NULL,ranked_variable5=NULL){
+  # data <- scen1_strategies_utilities
+  plot_ly(data, y = ~Strategy, x = ~ranked_variable1, type = 'bar', name = '80% Health - 20% Costs', orientation = 'h', text=~ranked_variable1, textposition = 'outside') %>%
+    # add_text(textfont = t, textposition = "top right") %>% 
+    add_trace(x = ~ranked_variable2, name = '50% Health - 50% Costs', text=~round(ranked_variable2, digits = 3)) %>%
+    add_trace(x = ~ranked_variable3, name = '20% Health - 80% Costs',text=~round(ranked_variable3, digits = 3)) %>%
+    layout(xaxis = list(title = 'Utility'), barmode = 'group', legend = list(orientation = 'h'), title=data$Scenario)
+}
+```
+
+
+# Investigate causal/preferential dependance of costs and health impact
+```{r include=FALSE}
+
+tmp <- robust_aggregated_score %>% select(Strategy, Scenario, costs_WS, health_WS) %>% mutate(costs_rank=frankv(costs_WS, order = -1), health_rank=frankv(health_WS, order = -1)) %>% filter(Scenario=="Scenario 1")
+
+plot_ly(data = tmp, y = ~Strategy, x = ~costs_rank, type = 'bar', name = 'costs_rank', orientation = 'h', text=~round(costs_rank, digits = 3), textposition = 'outside') %>%
+    # add_text(textfont = t, textposition = "top right") %>% 
+    add_trace(x = ~health_rank, name = 'health rank', text=~round(health_rank, digits = 3)) %>%
+    layout(xaxis = list(title = 'Ranks'), barmode = 'group', legend = list(orientation = 'h'), title=data$Scenario)
+
+
+```
+
+TODO Plot box-plot for aggregated scores to see variance among scenarios
