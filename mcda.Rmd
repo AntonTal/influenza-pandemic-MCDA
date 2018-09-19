@@ -13,8 +13,6 @@ editor_options:
   
 ---
 
-FUCK YOU
-
 <!-- # Setup -->
 ```{r include=FALSE}
 # knitr::opts_chunk$set(echo = F)
